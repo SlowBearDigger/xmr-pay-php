@@ -39,6 +39,17 @@ composer require slowbeardigger/xmr-pay
   HTTP works out of the box via PHP streams (no WordPress); inside WordPress it transparently uses
   `wp_safe_remote_*`.
 
+## Adapters
+
+Connecting a platform is thin: the engine does the Monero work, an adapter just maps the platform's
+order flow onto a handful of calls. See [docs/WRITING-AN-ADAPTER.md](docs/WRITING-AN-ADAPTER.md) for
+the full contract and a minimal skeleton. Reference adapters:
+
+- [xmr-pay for WooCommerce](https://github.com/SlowBearDigger/xmr-pay-woocommerce) — PHP inside WordPress.
+- [xmr-pay for Laravel](https://github.com/SlowBearDigger/xmr-pay-laravel) — a service + facade + config.
+
+WHMCS, Joomla, PrestaShop, OpenCart, and others are good next adapters and welcome contributions.
+
 ## Security model
 
 - **View key only.** The package never asks for or holds a spend key. It can read incoming
