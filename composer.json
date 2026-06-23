@@ -1,0 +1,23 @@
+{
+    "name": "slowbeardigger/xmr-pay",
+    "description": "Non-custodial Monero payment verification in pure PHP — view-key only, no monero-wallet-rpc, no server. The PHP engine behind xmr-pay, mirroring the npm library.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["monero", "xmr", "payments", "non-custodial", "view-key", "cryptocurrency", "payment-gateway", "serverless"],
+    "homepage": "https://github.com/SlowBearDigger/xmr-pay-php",
+    "authors": [
+        { "name": "SlowBearDigger" }
+    ],
+    "require": {
+        "php": ">=7.4",
+        "ext-gmp": "*",
+        "ext-bcmath": "*"
+    },
+    "autoload": {
+        "psr-4": { "XmrPay\\": "src/" },
+        "classmap": ["third-party/monero/"]
+    },
+    "scripts": {
+        "test": "for t in state util aggregation refund crypto; do echo \"-- $t --\"; php tests/$t.test.php || exit 1; done"
+    }
+}

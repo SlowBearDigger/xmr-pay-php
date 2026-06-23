@@ -1,0 +1,5 @@
+# Keep the dist tarball (composer require) lean: ship src/ + third-party/ (runtime) only.
+# third-party/ is REQUIRED at runtime (the classmap-autoloaded crypto) — never export-ignore it.
+/tests              export-ignore
+/.gitignore         export-ignore
+/.gitattributes     export-ignore
