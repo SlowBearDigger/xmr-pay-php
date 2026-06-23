@@ -18,6 +18,6 @@
         "classmap": ["third-party/monero/"]
     },
     "scripts": {
-        "test": "for t in state util aggregation refund crypto; do echo \"-- $t --\"; php tests/$t.test.php || exit 1; done"
+        "test": "for t in autoload state util aggregation refund crypto stress invariant-stress; do echo \"-- $t --\"; php tests/$t.test.php || exit 1; done"
     }
 }
