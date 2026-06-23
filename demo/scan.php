@@ -24,13 +24,21 @@ use XmrPay\Util;
 
 // ---------- config ----------
 // stagenet public nodes (comma-separated for failover + tip cross-check)
-$NODES = getenv('XMR_NODES') ?: 'http://node.monerodevs.org:38089,http://stagenet.melo.tools:38089';
+$NODES = getenv('XMR_NODES') ?: 'http://node2.monerodevs.org:38089,http://node.monerodevs.org:38089';
 
-// your stagenet wallet's PRIMARY address and PRIVATE view key.
-// on stagenet these are worthless test coins — safe to paste here for the meme.
-// get a stagenet wallet: `monero-wallet-cli --stagenet` → address + `viewkey` command.
+// wallet credentials — loaded from env, demo/wallet.json (auto-generated), or set manually.
+// run `php demo/wallet.php` first to generate a stagenet wallet.
 $ADDRESS  = getenv('XMR_ADDRESS')  ?: '';
 $VIEW_KEY = getenv('XMR_VIEWKEY') ?: '';
+
+if ($ADDRESS === '' || $VIEW_KEY === '') {
+    $wf = __DIR__ . '/wallet.json';
+    if (file_exists($wf)) {
+        $w        = json_decode(file_get_contents($wf), true);
+        $ADDRESS  = $w['address']  ?? '';
+        $VIEW_KEY = $w['view_key'] ?? '';
+    }
+}
 
 // subaddress index to watch (0 = the primary address itself)
 $SUBADDR_INDEX = (int)(getenv('XMR_INDEX') ?: 0);
