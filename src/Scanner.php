@@ -92,20 +92,49 @@ class Scanner {
 			if ( strlen( $raw ) > 4 * 1024 * 1024 ) { return null; }
 			return json_decode( $raw, true );
 		}
-		// test / non-WP fallback — restrict to http(s) so file:// / data: can never
-		// reach the filesystem even in XMRPAY_TESTING environments.
+		// non-WP host (Joomla, plain PHP, tests)
+		$raw = $this->http_raw( $url, $payload );
+		if ( null === $raw || strlen( $raw ) > 4 * 1024 * 1024 ) { return null; }
+		return json_decode( $raw, true );
+	}
+
+	// non-WP transport. curl first so it works where allow_url_fopen is Off (common on hardened
+	// shared hosts), with a stream-wrapper fallback. restricted to http(s) so file:// / data: can
+	// never reach the filesystem, even under XMRPAY_TESTING. returns the raw body or null.
+	private function http_raw( $url, $payload = null ) {
 		if ( ! in_array( strtolower( (string) parse_url( $url, PHP_URL_SCHEME ) ), array( 'http', 'https' ), true ) ) {
 			return null;
 		}
-		$ctx = stream_context_create( array( 'http' => array(
-			'method'        => 'POST',
-			'header'        => "Content-Type: application/json\r\n",
-			'content'       => $payload,
-			'timeout'       => $this->http_timeout,
-			'ignore_errors' => true,
-		) ) );
+		if ( function_exists( 'curl_init' ) ) {
+			$ch = curl_init( $url );
+			curl_setopt_array( $ch, array(
+				CURLOPT_RETURNTRANSFER => true,
+				CURLOPT_TIMEOUT        => $this->http_timeout,
+				CURLOPT_CONNECTTIMEOUT => $this->http_timeout,
+				CURLOPT_PROTOCOLS      => CURLPROTO_HTTP | CURLPROTO_HTTPS,
+				CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
+			) );
+			if ( null !== $payload ) {
+				curl_setopt( $ch, CURLOPT_POST, true );
+				curl_setopt( $ch, CURLOPT_POSTFIELDS, $payload );
+				curl_setopt( $ch, CURLOPT_HTTPHEADER, array( 'Content-Type: application/json' ) );
+			}
+			$raw  = curl_exec( $ch );
+			$code = (int) curl_getinfo( $ch, CURLINFO_HTTP_CODE );
+			curl_close( $ch );
+			// curl is present: trust its verdict (a failed request fails over to the next node),
+			// never fall through to a transport that needs allow_url_fopen.
+			return ( $raw !== false && $code >= 200 && $code < 300 ) ? $raw : null;
+		}
+		$opts = array( 'timeout' => $this->http_timeout, 'ignore_errors' => true );
+		if ( null !== $payload ) {
+			$opts['method']  = 'POST';
+			$opts['header']  = "Content-Type: application/json\r\n";
+			$opts['content'] = $payload;
+		}
+		$ctx = stream_context_create( array( 'http' => $opts ) );
 		$raw = @file_get_contents( $url, false, $ctx );
-		return $raw === false ? null : json_decode( $raw, true );
+		return $raw === false ? null : $raw;
 	}
 
 	/** Fetch + decode a BATCH of transactions. Returns an array of as_json arrays (each with
@@ -243,11 +272,9 @@ class Scanner {
 			if ( strlen( $raw ) > 4 * 1024 * 1024 ) { return null; }
 			return json_decode( $raw, true );
 		}
-		if ( ! in_array( strtolower( (string) parse_url( $url, PHP_URL_SCHEME ) ), array( 'http', 'https' ), true ) ) {
-			return null;
-		}
-		$raw = @file_get_contents( $url );
-		return $raw === false ? null : json_decode( $raw, true );
+		$raw = $this->http_raw( $url );
+		if ( null === $raw || strlen( $raw ) > 4 * 1024 * 1024 ) { return null; }
+		return json_decode( $raw, true );
 	}
 
 	/* ------------------------------------------------------------------ *
