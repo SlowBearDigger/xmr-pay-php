@@ -49,7 +49,8 @@ class Scanner {
 		// until one answers) and a conservative tip_height CROSS-CHECK (min height across
 		// responders) — so a lagging or lying node can only DELAY settlement, never bring it
 		// forward. Heavy calls (tx fetch, get_block) inherit failover via node_rpc/json_rpc.
-		$list               = is_array( $node ) ? $node : explode( ',', (string) $node );
+		// accept a comma- OR newline-separated list (the config textarea says "one per line")
+		$list               = is_array( $node ) ? $node : preg_split( '/[\r\n,]+/', (string) $node );
 		$this->nodes        = array_values( array_filter( array_map( function ( $u ) { return rtrim( trim( (string) $u ), '/' ); }, $list ) ) );
 		$this->node         = $this->nodes ? $this->nodes[0] : '';
 		$this->http_timeout = (int) $http_timeout;
