@@ -122,7 +122,7 @@ class Scanner {
 			}
 			$raw  = curl_exec( $ch );
 			$code = (int) curl_getinfo( $ch, CURLINFO_HTTP_CODE );
-			curl_close( $ch );
+			// curl_close() is a no-op since PHP 8 (handles are freed automatically) and deprecated in 8.5.
 			// curl is present: trust its verdict (a failed request fails over to the next node),
 			// never fall through to a transport that needs allow_url_fopen.
 			return ( $raw !== false && $code >= 200 && $code < 300 ) ? $raw : null;
