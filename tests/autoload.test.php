@@ -35,6 +35,7 @@ $pass = 0; $fail = 0;
 function ok($n, $c) { global $pass, $fail; if ($c) { $pass++; echo "PASS  $n\n"; } else { $fail++; echo "FAIL  $n\n"; } }
 
 ok('PSR-4: XmrPay\\Util autoloads', class_exists('XmrPay\\Util'));
+ok('PSR-4: XmrPay\\NodeConfig autoloads', class_exists('XmrPay\\NodeConfig'));
 ok('PSR-4: XmrPay\\Scanner autoloads', class_exists('XmrPay\\Scanner'));
 ok('classmap: MoneroIntegrations\\MoneroPhp\\Cryptonote autoloads', class_exists('MoneroIntegrations\\MoneroPhp\\Cryptonote'));
 ok('classmap: MoneroIntegrations\\MoneroPhp\\base58 autoloads', class_exists('MoneroIntegrations\\MoneroPhp\\base58'));

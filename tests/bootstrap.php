@@ -9,6 +9,7 @@ require_once $root . '/third-party/monero/Varint.php';
 require_once $root . '/third-party/monero/Keccak.php';
 require_once $root . '/third-party/monero/ed25519.php';
 require_once $root . '/third-party/monero/Cryptonote.php';
+require_once $root . '/src/NodeConfig.php';
 require_once $root . '/src/Util.php';
 require_once $root . '/src/Scanner.php';
 
