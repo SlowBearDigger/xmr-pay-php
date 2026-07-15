@@ -90,7 +90,7 @@ class NodeConfig {
 		if ( is_string( $row ) ) {
 			$row = array( 'url' => $row, 'auth' => 'none' );
 		}
-		if ( ! is_array( $row ) ) {
+		if ( ! is_array( $row ) || ! self::isNodeRow( $row ) ) {
 			throw new InvalidArgumentException( 'invalid-node' );
 		}
 
@@ -108,6 +108,17 @@ class NodeConfig {
 			throw new InvalidArgumentException( 'invalid-scheme' );
 		}
 		if ( isset( $parts['query'] ) || isset( $parts['fragment'] ) ) {
+			throw new InvalidArgumentException( 'invalid-url' );
+		}
+
+		// parse_url() tolerates hosts no HTTP client will resolve: percent-encoding (which
+		// some URL parsers re-decode into userinfo — the classic parse_url/client split) and
+		// a bare ':' from unbracketed IPv6. The JS twin's WHATWG parser rejects both.
+		$host = (string) $parts['host'];
+		if ( false !== strpos( $host, '%' ) ) {
+			throw new InvalidArgumentException( 'invalid-url' );
+		}
+		if ( false !== strpos( $host, ':' ) && ( '[' !== $host[0] || ']' !== substr( $host, -1 ) ) ) {
 			throw new InvalidArgumentException( 'invalid-url' );
 		}
 

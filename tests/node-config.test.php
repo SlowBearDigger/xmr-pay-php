@@ -68,6 +68,14 @@ rejects( array( array( 'url' => 'https://node.example', 'auth' => 'basic', 'user
 rejects( array( array( 'url' => 'http://127.0.0.1:38091', 'auth' => 'basic', 'username' => 'a', 'password' => 'b' ) ), 'insecure-http-auth', 'authenticated HTTP requires opt in' );
 rejects( '[not-json]', 'invalid-json', 'invalid JSON rejected' );
 rejects( '', 'empty-node-list', 'empty list rejected' );
+rejects( 'https://node.example%40evil.example', 'invalid-url', 'percent-encoded host rejected' );
+rejects( 'https://::1:18081', 'invalid-url', 'unbracketed IPv6 host rejected' );
+rejects( 'https:/node.example', 'invalid-url', 'single-slash scheme rejected' );
+rejects( 'https:node.example', 'invalid-url', 'slashless scheme rejected' );
+rejects( array( array( 'wrong-key' => 'https://node.example' ) ), 'invalid-node', 'row without node keys rejected' );
+
+$v6 = NodeConfig::normalizeList( 'https://[::1]:18081' );
+ok( 'https://[::1]:18081' === $v6[0]['url'], 'bracketed IPv6 host accepted' );
 
 echo "\n" . ( $fail ? "FAILED ({$fail})" : 'ALL GREEN' ) . "  {$pass} passed, {$fail} failed\n";
 exit( $fail ? 1 : 0 );
