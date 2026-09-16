@@ -46,10 +46,8 @@ class Scanner {
 	 * address string. Defaults to mainnet.
 	 */
 	public function __construct( $node, $network = 'mainnet', $http_timeout = 20 ) {
-		// $node is one URL or a comma-separated list. The extras give node_rpc FAILOVER (try each
-		// until one answers) and a conservative tip_height CROSS-CHECK (min height across
-		// responders) — so a lagging or lying node can only DELAY settlement, never bring it
-		// forward. Heavy calls (tx fetch, get_block) inherit failover via node_rpc/json_rpc.
+		// Node lists provide failover for block lookup. Heights and transaction data
+		// must agree across all configured nodes before a payment can settle.
 		$this->nodes        = NodeConfig::normalizeList( $node );
 		$this->node         = $this->nodes[0];
 		$this->http_timeout = (int) $http_timeout;
@@ -252,22 +250,56 @@ class Scanner {
 	public function fetch_txs( $txids ) {
 		$txids = array_values( array_filter( (array) $txids ) );
 		if ( ! $txids ) { return array(); }
-		$resp = $this->node_rpc( '/get_transactions', array( 'txs_hashes' => $txids, 'decode_as_json' => true ), 'txs' );
-		if ( ! $resp || ! isset( $resp['txs'] ) || ! is_array( $resp['txs'] ) ) { return null; }
-		$out = array();
-		foreach ( $resp['txs'] as $tx ) {
-			$asjson = isset( $tx['as_json'] ) ? json_decode( $tx['as_json'], true ) : null;
-			if ( ! is_array( $asjson ) ) { continue; }
-			$asjson['_txid']         = isset( $tx['tx_hash'] ) ? $tx['tx_hash'] : '';
-			$asjson['_block_height'] = isset( $tx['block_height'] ) ? (int) $tx['block_height'] : null;
-			$asjson['_in_pool']      = ! empty( $tx['in_pool'] );
-			// the daemon forces this false for on-chain txs and only sets it true for a MEMPOOL tx
-			// whose key images conflict with another pool tx — i.e. a visible double-spend attempt.
-			// only meaningful while in_pool; carried so the 0-conf credit path can refuse it.
-			$asjson['_double_spend_seen'] = ! empty( $tx['double_spend_seen'] );
-			$out[] = $asjson;
+		$wanted = array();
+		foreach ( $txids as $id ) {
+			if ( ! is_string( $id ) || ! preg_match( '/^[0-9a-f]{64}$/i', $id ) ) { return null; }
+			$wanted[ strtolower( $id ) ] = true;
 		}
-		return $out;
+		if ( count( $wanted ) !== count( $txids ) ) { return null; }
+		$body = array( 'txs_hashes' => $txids, 'decode_as_json' => true );
+		$responses = array();
+		if ( count( $this->nodes ) > 1 ) {
+			// Every configured node must attest to the same tx and block height.
+			foreach ( $this->nodes as $index => $node ) {
+				$responses[] = $this->node_rpc_one( $node, $index, '/get_transactions', $body );
+			}
+		} else {
+			$responses[] = $this->node_rpc( '/get_transactions', $body, 'txs' );
+		}
+		$baseline = null;
+		$result = null;
+		foreach ( $responses as $resp ) {
+			if ( ! is_array( $resp ) || ! isset( $resp['txs'] ) || ! is_array( $resp['txs'] ) || count( $resp['txs'] ) !== count( $txids ) ) { return null; }
+			$remaining = $wanted;
+			$rows = array();
+			$evidence = array();
+			foreach ( $resp['txs'] as $tx ) {
+				if ( ! is_array( $tx ) ) { return null; }
+				$hash = strtolower( (string) ( $tx['tx_hash'] ?? '' ) );
+				if ( ! isset( $remaining[ $hash ] ) ) { return null; }
+				$asjson = isset( $tx['as_json'] ) ? json_decode( $tx['as_json'], true ) : null;
+				if ( ! is_array( $asjson ) || ! isset( $asjson['extra'], $asjson['vout'] )
+					|| ! is_array( $asjson['extra'] ) || ! is_array( $asjson['vout'] ) ) { return null; }
+				unset( $remaining[ $hash ] );
+				$asjson['_txid'] = $hash;
+				$asjson['_block_height'] = isset( $tx['block_height'] ) ? (int) $tx['block_height'] : null;
+				$asjson['_in_pool'] = ! empty( $tx['in_pool'] );
+				$asjson['_double_spend_seen'] = ! empty( $tx['double_spend_seen'] );
+				$rows[ $hash ] = $asjson;
+				$evidence[ $hash ] = array(
+					$asjson['_block_height'], $asjson['_in_pool'], $asjson['_double_spend_seen'],
+					$asjson['unlock_time'] ?? 0,
+					$asjson['extra'] ?? array(),
+					$asjson['vout'] ?? array(),
+					$asjson['rct_signatures']['ecdhInfo'] ?? array(),
+					$asjson['rct_signatures']['outPk'] ?? ( $asjson['rctsig_prunable']['outPk'] ?? array() ),
+				);
+			}
+			if ( null !== $baseline && $evidence != $baseline ) { return null; }
+			$baseline = $evidence;
+			$result = $rows;
+		}
+		return array_values( $result );
 	}
 
 	/** Fetch + decode ONE transaction. Returns the as_json array or null. */
@@ -356,16 +388,34 @@ class Scanner {
 
 	/** The non-coinbase tx hashes in a block at $height. Returns array (maybe empty) or null on error. */
 	private function block_tx_hashes( $height ) {
+		if ( count( $this->nodes ) > 1 ) {
+			$body = array( 'jsonrpc' => '2.0', 'id' => '0', 'method' => 'get_block', 'params' => array( 'height' => (int) $height ) );
+			$expected = null;
+			$hashes = null;
+			foreach ( $this->nodes as $index => $node ) {
+				$resp = $this->node_rpc_one( $node, $index, '/json_rpc', $body );
+				$list = $resp['result']['tx_hashes'] ?? null;
+				if ( ! is_array( $list ) ) { return null; }
+				$sorted = array();
+				foreach ( $list as $hash ) {
+					if ( ! is_string( $hash ) || ! preg_match( '/^[0-9a-f]{64}$/i', $hash ) ) { return null; }
+					$sorted[] = strtolower( $hash );
+				}
+				if ( count( array_unique( $sorted ) ) !== count( $sorted ) ) { return null; }
+				sort( $sorted );
+				if ( null !== $expected && $sorted !== $expected ) { return null; }
+				$expected = $sorted;
+				$hashes = $list;
+			}
+			return $hashes;
+		}
 		$r = $this->json_rpc( 'get_block', array( 'height' => (int) $height ) );
-		if ( null === $r ) { return null; }
-		return isset( $r['tx_hashes'] ) && is_array( $r['tx_hashes'] ) ? $r['tx_hashes'] : array();
+		return isset( $r['tx_hashes'] ) && is_array( $r['tx_hashes'] ) ? $r['tx_hashes'] : null;
 	}
 
 	public function tip_height() {
-		// CROSS-CHECK: ask every configured node and take the MINIMUM height among responders.
-		// confirmations = tip - tx_height, so the lowest tip yields the fewest confirmations — a
-		// node that is behind or lying can only DELAY settlement, never accelerate it. null if no
-		// node answered (the caller — scan_order / verify — then declines to act on stale data).
+		// Require a height from every configured node. The lowest height gives
+		// conservative confirmations; an unavailable node pauses settlement.
 		$heights = array();
 		$this->reset_node_error();
 		foreach ( $this->nodes as $index => $node ) {
@@ -376,7 +426,7 @@ class Scanner {
 				$this->set_node_error( 'malformed-response', $index, $node );
 			}
 		}
-		return $heights ? min( $heights ) : null;
+		return $heights && count( $heights ) === count( $this->nodes ) ? min( $heights ) : null;
 	}
 	private function node_rpc_get_one( $node, $index, $path ) {
 		$url = $node['url'] . $path;
@@ -642,10 +692,15 @@ class Scanner {
 			if ( ( microtime( true ) - $start ) > $budget_s ) { break; }
 			$hashes = $this->block_tx_hashes( $h );
 			if ( null === $hashes ) { break; }                 // node hiccup — resume next tick
+			$incomplete = false;
 			foreach ( array_chunk( $hashes, 50 ) as $batch ) {
 				$txs = $this->fetch_txs( $batch );
-				if ( null === $txs ) { return array( 'found' => false, 'scanned_to' => $last ); }
+				if ( null === $txs ) { $incomplete = true; continue; }
 				foreach ( $txs as $tx ) {
+					if ( ! empty( $tx['_in_pool'] ) || ! isset( $tx['_block_height'] ) || (int) $tx['_block_height'] !== $h ) {
+						$incomplete = true;
+						continue;
+					}
 					$m = $this->detect_in_tx( $tx, $address, $view_key );
 					if ( null === $m ) { continue; }
 					if ( $req_commit && empty( $m['commitment_ok'] ) ) { continue; }
@@ -665,6 +720,7 @@ class Scanner {
 					);
 				}
 			}
+			if ( $incomplete ) { return array( 'found' => false, 'scanned_to' => $last ); }
 			$last = $h;
 		}
 		return array( 'found' => false, 'scanned_to' => $last );
@@ -691,10 +747,15 @@ class Scanner {
 			if ( ( microtime( true ) - $start ) > $budget_s ) { break; }
 			$hashes = $this->block_tx_hashes( $h );
 			if ( null === $hashes ) { break; }                 // node hiccup — resume next tick
+			$incomplete = false;
 			foreach ( array_chunk( $hashes, 50 ) as $batch ) {
 				$txs = $this->fetch_txs( $batch );
-				if ( null === $txs ) { return array( 'matches' => $matches, 'scanned_to' => $last ); }
+				if ( null === $txs ) { $incomplete = true; continue; }
 				foreach ( $txs as $tx ) {
+					if ( ! empty( $tx['_in_pool'] ) || ! isset( $tx['_block_height'] ) || (int) $tx['_block_height'] !== $h ) {
+						$incomplete = true;
+						continue;
+					}
 					$m = $this->detect_in_tx( $tx, $address, $view_key );
 					if ( null === $m ) { continue; }
 					if ( $req_commit && empty( $m['commitment_ok'] ) ) { continue; }
@@ -713,6 +774,7 @@ class Scanner {
 					);
 				}
 			}
+			if ( $incomplete ) { return array( 'matches' => $matches, 'scanned_to' => $last ); }
 			$last = $h;
 		}
 		return array( 'matches' => $matches, 'scanned_to' => $last );

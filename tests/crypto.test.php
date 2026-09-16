@@ -11,8 +11,10 @@
 
 define( 'ABSPATH', __DIR__ . '/' );   // satisfy the includes' direct-access guard
 if ( ! function_exists( 'wp_parse_url' ) ) { function wp_parse_url( $url, $component = -1 ) { return parse_url( (string) $url, $component ); } }
-require_once __DIR__ . '/bootstrap.php';
-require_once __DIR__ . '/bootstrap.php';
+function wp_safe_remote_post( $url, $args ) { $r = $GLOBALS['MOCK_TX_RESPONSES'][ $url ] ?? ( substr( $url, -9 ) === '/json_rpc' ? ( $GLOBALS['MOCK_RPC_RESPONSE'] ?? array() ) : $GLOBALS['MOCK_TX_RESPONSE'] ); return array( 'response' => array( 'code' => 200 ), 'body' => json_encode( $r ) ); }
+function wp_remote_retrieve_response_code( $res ) { return $res['response']['code']; }
+function wp_remote_retrieve_body( $res ) { return $res['body']; }
+function is_wp_error( $res ) { return false; }
 require_once __DIR__ . '/bootstrap.php';
 
 $pass = 0; $fail = 0;
@@ -93,6 +95,73 @@ ok( 'fuzz: 1500 hostile txs never threw', ! $crashed );
 ok( 'fuzz: hostile txs never raised a PHP warning/notice', 0 === $err, "warnings=$err" );
 ok( 'fuzz: random data is NEVER detected as a payment (no false-positive)', ! $falsepos );
 ok( 'fuzz: >256-output tx bails via the DoS guard → null', null === $huge_r );
+
+// A node that omits, substitutes, or fails to decode a requested tx must not let
+// the block scanner checkpoint past that payment.
+$a = str_repeat( 'a', 64 ); $b = str_repeat( 'b', 64 ); $c = str_repeat( 'c', 64 );
+$row = function ( $hash ) { return array( 'tx_hash' => $hash, 'as_json' => '{"extra":[],"vout":[]}', 'block_height' => 100 ); };
+$GLOBALS['MOCK_TX_RESPONSE'] = array( 'txs' => array( $row( $a ), $row( $b ) ) );
+ok( 'complete tx batch accepted', count( $sc->fetch_txs( array( $a, $b ) ) ) === 2 );
+$GLOBALS['MOCK_TX_RESPONSE'] = array( 'txs' => array( $row( $a ) ) );
+ok( 'missing tx rejects the whole block batch', null === $sc->fetch_txs( array( $a, $b ) ) );
+$GLOBALS['MOCK_TX_RESPONSE'] = array( 'txs' => array( $row( $a ), $row( $c ) ) );
+ok( 'substituted tx rejects the whole block batch', null === $sc->fetch_txs( array( $a, $b ) ) );
+$bad = $row( $b ); $bad['as_json'] = '{';
+$GLOBALS['MOCK_TX_RESPONSE'] = array( 'txs' => array( $row( $a ), $bad ) );
+ok( 'undecodable tx rejects the whole block batch', null === $sc->fetch_txs( array( $a, $b ) ) );
+$bad['as_json'] = '{}';
+$GLOBALS['MOCK_TX_RESPONSE'] = array( 'txs' => array( $row( $a ), $bad ) );
+ok( 'tx without output structure rejects the whole block batch', null === $sc->fetch_txs( array( $a, $b ) ) );
+
+$nodes = array( 'http://127.0.0.1:2', 'http://127.0.0.1:3' );
+$multi = new XmrPay_Scanner( $nodes, 'stagenet' );
+$GLOBALS['MOCK_TX_RESPONSES'] = array(
+    $nodes[0] . '/get_transactions' => array( 'txs' => array( $row( $a ) ) ),
+    $nodes[1] . '/get_transactions' => array( 'txs' => array( $row( $a ) ) ),
+);
+ok( 'two agreeing nodes accept a tx', count( $multi->fetch_txs( array( $a ) ) ) === 1 );
+$with_extra = $row( $a ); $with_extra['as_json'] = '{"extra":[],"vout":[],"unused_daemon_field":true}';
+$GLOBALS['MOCK_TX_RESPONSES'][ $nodes[1] . '/get_transactions' ] = array( 'txs' => array( $with_extra ) );
+ok( 'irrelevant daemon fields do not pause verification', count( $multi->fetch_txs( array( $a ) ) ) === 1 );
+$changed_output = $row( $a ); $changed_output['as_json'] = '{"extra":[],"vout":[{"amount":1}]}';
+$GLOBALS['MOCK_TX_RESPONSES'][ $nodes[1] . '/get_transactions' ] = array( 'txs' => array( $changed_output ) );
+ok( 'payment evidence disagreement pauses verification', null === $multi->fetch_txs( array( $a ) ) );
+$GLOBALS['MOCK_TX_RESPONSES'][ $nodes[1] . '/get_transactions' ] = array( 'txs' => array( $row( $a ) ) );
+$early = $row( $a ); $early['block_height'] = 1;
+$GLOBALS['MOCK_TX_RESPONSES'][ $nodes[0] . '/get_transactions' ] = array( 'txs' => array( $early ) );
+ok( 'height disagreement cannot confirm early', null === $multi->fetch_txs( array( $a ) ) );
+unset( $GLOBALS['MOCK_TX_RESPONSES'][ $nodes[1] . '/get_transactions' ] );
+$GLOBALS['MOCK_TX_RESPONSE'] = array();
+ok( 'missing node pauses multi-node verification', null === $multi->fetch_txs( array( $a ) ) );
+$GLOBALS['MOCK_TX_RESPONSES'][ $nodes[0] . '/json_rpc' ] = array( 'result' => array( 'tx_hashes' => array( $a ) ) );
+$GLOBALS['MOCK_TX_RESPONSES'][ $nodes[1] . '/json_rpc' ] = array( 'result' => array( 'tx_hashes' => array() ) );
+$scan = $multi->scan_all( $ADDR, $VIEW, 100, 100, array( 'tip' => 110 ) );
+ok( 'block hash disagreement cannot advance scan', $scan['scanned_to'] === 99 );
+$GLOBALS['MOCK_TX_RESPONSES'][ $nodes[1] . '/json_rpc' ] = array( 'result' => array( 'tx_hashes' => array( $a ) ) );
+$GLOBALS['MOCK_TX_RESPONSES'][ $nodes[0] . '/get_transactions' ] = array( 'txs' => array( $row( $a ) ) );
+$GLOBALS['MOCK_TX_RESPONSES'][ $nodes[1] . '/get_transactions' ] = array( 'txs' => array( $row( $a ) ) );
+$scan = $multi->scan_all( $ADDR, $VIEW, 100, 100, array( 'tip' => 110 ) );
+ok( 'matching block and tx advance scan', $scan['scanned_to'] === 100 );
+unset( $GLOBALS['MOCK_TX_RESPONSES'] );
+
+$GLOBALS['MOCK_TX_RESPONSE'] = array( 'txs' => array( $early ) );
+$GLOBALS['MOCK_RPC_RESPONSE'] = array( 'result' => array( 'tx_hashes' => array( $a ) ) );
+$scan = $sc->scan_all( $ADDR, $VIEW, 100, 100, array( 'tip' => 110 ) );
+ok( 'tx outside claimed block cannot advance scan', $scan['scanned_to'] === 99 && count( $scan['matches'] ) === 0 );
+
+$later = new class( 'http://127.0.0.1:1', 'stagenet' ) extends XmrPay_Scanner {
+    public function detect_in_tx( $tx, $address, $view_key ) {
+        return $tx['_txid'] === str_repeat( 'b', 64 )
+            ? array( 'amount_atomic' => '100', 'output_index' => 0, 'commitment_ok' => true ) : null;
+    }
+};
+$GLOBALS['MOCK_TX_RESPONSE'] = array( 'txs' => array( $early, $row( $b ) ) );
+$GLOBALS['MOCK_RPC_RESPONSE'] = array( 'result' => array( 'tx_hashes' => array( $a, $b ) ) );
+$scan = $later->scan_all( $ADDR, $VIEW, 100, 100, array( 'tip' => 110 ) );
+ok( 'later valid payment remains visible without checkpointing incomplete block',
+    $scan['scanned_to'] === 99 && count( $scan['matches'] ) === 1 && $scan['matches'][0]['txid'] === $b );
+$scan = $later->scan( $ADDR, $VIEW, 100, 100, array( 'tip' => 110 ) );
+ok( 'first-match scan also reaches later valid payment', ! empty( $scan['found'] ) && $scan['txid'] === $b );
 
 echo "\n" . ( 0 === $fail ? 'ALL GREEN' : 'FAILED' ) . " — $pass passed, $fail failed\n";
 exit( 0 === $fail ? 0 : 1 );
