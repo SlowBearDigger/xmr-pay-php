@@ -1,10 +1,6 @@
 <?php
-// xmr-pay-php demo — stagenet wallet generator.
-// generates a fresh stagenet address + keys in pure PHP, saves to demo/wallet.json.
-// no monero-wallet-cli, no daemon, no Composer.
-//
-// usage:
-//   php demo/wallet.php
+// Demonstrate view-only wallet payment detection.
+
 
 $root = dirname(__DIR__);
 require_once $root . '/third-party/monero/base58.php';
@@ -44,7 +40,6 @@ $spend_pub  = $cn->pk_from_sk($spend_priv);
 $view_pub   = $cn->pk_from_sk($view_priv);
 $address    = $cn->encode_address($spend_pub, $view_pub);
 
-// quick sanity: view key should round-trip via Scanner::verify_keys
 $s  = new Scanner('http://node2.monerodevs.org:38089', 'stagenet', 5);
 $vk = $s->verify_keys($address, $view_priv);
 if (!$vk['address_valid'] || !$vk['key_match']) {
@@ -55,9 +50,9 @@ if (!$vk['address_valid'] || !$vk['key_match']) {
 $wallet = [
     'network'   => 'stagenet',
     'address'   => $address,
-    'spend_key' => $spend_priv,   // keep safe — can spend funds
-    'view_key'  => $view_priv,    // used by scanner — view only
-    'seed'      => $seed,         // backup: gen_private_keys(seed) reproduces the keys
+    'spend_key' => $spend_priv,
+    'view_key'  => $view_priv,
+    'seed'      => $seed,
 ];
 
 file_put_contents($out, json_encode($wallet, JSON_PRETTY_PRINT) . "\n");

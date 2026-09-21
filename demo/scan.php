@@ -1,14 +1,6 @@
 <?php
-// xmr-pay-php demo — standalone stagenet scanner.
-// no Composer, no backend, no wallet-rpc. only PHP + GMP + BCMath.
-//
-// usage:
-//   php demo/scan.php
-//
-// or set env vars (recommended — keeps secrets out of the file):
-//   XMR_ADDRESS=5...  XMR_VIEWKEY=abc...  php demo/scan.php
-//
-// copies to any machine (or PS4) that has a php binary compiled with --enable-gmp --enable-bcmath.
+// Demonstrate bounded payment scanning.
+
 
 $root = dirname(__DIR__);
 require_once $root . '/third-party/monero/base58.php';
@@ -22,12 +14,8 @@ require_once $root . '/src/Scanner.php';
 use XmrPay\Scanner;
 use XmrPay\Util;
 
-// ---------- config ----------
-// stagenet public nodes (comma-separated for failover + tip cross-check)
 $NODES = getenv('XMR_NODES') ?: 'http://node2.monerodevs.org:38089,http://node.monerodevs.org:38089';
 
-// wallet credentials — loaded from env, demo/wallet.json (auto-generated), or set manually.
-// run `php demo/wallet.php` first to generate a stagenet wallet.
 $ADDRESS  = getenv('XMR_ADDRESS')  ?: '';
 $VIEW_KEY = getenv('XMR_VIEWKEY') ?: '';
 
@@ -40,18 +28,13 @@ if ($ADDRESS === '' || $VIEW_KEY === '') {
     }
 }
 
-// subaddress index to watch (0 = the primary address itself)
 $SUBADDR_INDEX = (int)(getenv('XMR_INDEX') ?: 0);
 
-// how many blocks to scan per tick (stagenet ~2 min / block)
 $BLOCKS_PER_TICK = (int)(getenv('XMR_BLOCKS') ?: 20);
 
-// pause between ticks when caught up to chain tip (seconds)
 $SLEEP = (int)(getenv('XMR_SLEEP') ?: 30);
 
-// minimum confirmations to consider a payment settled
 $MIN_CONF = (int)(getenv('XMR_MIN_CONF') ?: 10);
-// ---------- end config ----------
 
 if ($ADDRESS === '' || $VIEW_KEY === '') {
     fwrite(STDERR, "set XMR_ADDRESS and XMR_VIEWKEY (env) or edit the config block at the top.\n");
@@ -89,7 +72,6 @@ if (!$tip) {
     exit(1);
 }
 
-// start 100 blocks back so any recent payment is caught on first scan
 $from = max(1, $tip - 100);
 
 $label = $SUBADDR_INDEX > 0 ? "subaddress #$SUBADDR_INDEX" : 'primary address';
@@ -105,7 +87,7 @@ echo "  from    : block $from\n";
 echo "  " . str_repeat('-', 52) . "\n\n";
 
 $total_pico    = gmp_init(0);
-$seen_out_keys = [];   // dedup by one-time output key (burning-bug guard)
+$seen_out_keys = [];
 
 while (true) {
     $new_tip = $scanner->tip_height();

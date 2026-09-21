@@ -1,16 +1,12 @@
 <?php
+// Validate daemon connections and redact their credentials.
 
 namespace XmrPay;
 
 use InvalidArgumentException;
 
-/** Normalize legacy node URLs and structured authenticated node records. */
 class NodeConfig {
 
-	/**
-	 * @param mixed $value A URL string, delimited URL list, JSON array, or PHP array.
-	 * @return array<int,array<string,mixed>>
-	 */
 	public static function normalizeList( $value ) {
 		$rows = self::inputRows( $value );
 		$out  = array();
@@ -26,7 +22,6 @@ class NodeConfig {
 		return $out;
 	}
 
-	/** Return node metadata that is safe to expose in status and diagnostics. */
 	public static function publicList( $nodes ) {
 		$out = array();
 		foreach ( (array) $nodes as $node ) {
@@ -39,7 +34,6 @@ class NodeConfig {
 		return $out;
 	}
 
-	/** Strip query and fragment data from a normalized URL before public display. */
 	public static function publicUrl( $url ) {
 		$parts = parse_url( (string) $url );
 		if ( ! is_array( $parts ) || empty( $parts['scheme'] ) || empty( $parts['host'] ) ) {
@@ -111,9 +105,6 @@ class NodeConfig {
 			throw new InvalidArgumentException( 'invalid-url' );
 		}
 
-		// parse_url() tolerates hosts no HTTP client will resolve: percent-encoding (which
-		// some URL parsers re-decode into userinfo — the classic parse_url/client split) and
-		// a bare ':' from unbracketed IPv6. The JS twin's WHATWG parser rejects both.
 		$host = (string) $parts['host'];
 		if ( false !== strpos( $host, '%' ) ) {
 			throw new InvalidArgumentException( 'invalid-url' );
