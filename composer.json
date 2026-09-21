@@ -1,6 +1,6 @@
 {
     "name": "slowbeardigger/xmr-pay",
-    "description": "Non-custodial Monero payment verification in pure PHP — view-key only, no monero-wallet-rpc, no server. The PHP engine behind xmr-pay, mirroring the npm library.",
+    "description": "Monero payment verification in PHP using a private view key and configured nodes. Includes amount, state and payment aggregation helpers.",
     "type": "library",
     "license": "MIT",
     "keywords": ["monero", "xmr", "payments", "non-custodial", "view-key", "cryptocurrency", "payment-gateway", "serverless"],

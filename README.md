@@ -1,18 +1,19 @@
 # xmr-pay (PHP)
 
-Non-custodial **Monero payment verification in pure PHP** — view-key only, **no
-`monero-wallet-rpc`, no daemon on your box required, no server**. This is the PHP engine behind
+Non-custodial **Monero payment verification in pure PHP**: view-key only, **no
+`monero-wallet-rpc` or separate payment daemon required**. It runs in your PHP server. This is the PHP engine behind
 [xmr-pay for WooCommerce](https://github.com/SlowBearDigger/xmr-pay-woocommerce), extracted as a
 standalone Composer package so any PHP project can accept Monero: Laravel, Symfony, Joomla,
 PrestaShop, Magento, OpenCart, or a plain checkout.
 
-It is the exact mirror of the [xmr-pay JavaScript library](https://github.com/SlowBearDigger/xmr-pay)
-— same money math, same invoice state machine — pinned by shared conformance vectors.
+It shares money and invoice-state contracts with the
+[xmr-pay JavaScript library](https://github.com/SlowBearDigger/xmr-pay), checked by
+conformance vectors. Transports, scanning and node-agreement policies differ.
 
 ## How it differs from `monero-integrations/monerophp`
 
 `monerophp` is a crypto toolbox + RPC clients (the building blocks). This package is the **layer
-on top**: it answers *"is this order paid?"* — it derives a per-order subaddress, detects the
+on top**: it answers *"is this order paid?"*: it derives a per-order subaddress, detects the
 output against your view key, verifies the RingCT amount commitment, checks confirmations and
 time-locks, dedupes the 2018 burning bug, and runs the invoice state machine. It builds on
 monerophp's primitives (see `third-party/monero/ATTRIBUTION.md`); it does not reimplement them.
@@ -32,12 +33,12 @@ composer require slowbeardigger/xmr-pay
 
 ## What's here
 
-- `XmrPay\Util` — money math, the invoice state machine (`to_invoice_state`), claim-link expiry,
+- `XmrPay\Util`: money math, the invoice state machine (`to_invoice_state`), claim-link expiry,
   multi-transaction payment aggregation (`summarize_payments`), CSV safety. Pure, no network.
-- `XmrPay\Scanner` — the verification engine: fetch a tx from a node, detect a payment to your
+- `XmrPay\Scanner`: the verification engine: fetch a tx from a node, detect a payment to your
   address/subaddress, decode + verify the amount, report confirmations / lock / double-spend.
-  HTTP works out of the box via PHP streams (no WordPress); inside WordPress it transparently uses
-  `wp_safe_remote_*`.
+  HTTP uses cURL when available, or PHP streams for supported requests. Inside
+  WordPress, unauthenticated requests use `wp_safe_remote_*`. Digest requires cURL.
 
 ## Adapters
 
@@ -45,10 +46,11 @@ Connecting a platform is thin: the engine does the Monero work, an adapter just 
 order flow onto a handful of calls. See [docs/WRITING-AN-ADAPTER.md](docs/WRITING-AN-ADAPTER.md) for
 the full contract and a minimal skeleton. Reference adapters:
 
-- [xmr-pay for WooCommerce](https://github.com/SlowBearDigger/xmr-pay-woocommerce) — PHP inside WordPress.
-- [xmr-pay for Laravel](https://github.com/SlowBearDigger/xmr-pay-laravel) — a service + facade + config.
+- [xmr-pay for WooCommerce](https://github.com/SlowBearDigger/xmr-pay-woocommerce): PHP inside WordPress.
+- [xmr-pay for Laravel](https://github.com/SlowBearDigger/xmr-pay-laravel): a service + facade + config.
 
-WHMCS, Joomla, PrestaShop, OpenCart, and others are good next adapters and welcome contributions.
+HikaShop and VirtueMart adapters also exist and share `xmr-pay-adapter-core`.
+Blesta integrates with the JavaScript agent instead of this PHP scanner.
 
 ## Security model
 
@@ -56,16 +58,18 @@ WHMCS, Joomla, PrestaShop, OpenCart, and others are good next adapters and welco
   payments; it can never move funds.
 - **The amount is proven, not claimed** (RingCT commitment check). It fails closed: commitment,
   confirmations, no time-lock, and no double-count must all pass, or the payment is not credited.
-- **You trust the node you point it at.** Use your own, or require agreement across nodes.
+- **You trust the node you point it at.** The scanner requires all configured nodes to respond and agree. Use independent,
+  trusted nodes; agreement does not validate consensus independently.
 
 ## Status
 
-Extracted from the WooCommerce plugin (the proven engine). Pure-logic tests (`tests/`: state,
-util, aggregation, refund, crypto) run under plain `php` with no Composer:
+Extracted from the WooCommerce scanner. Tests (`tests/`: state,
+util, aggregation, refund, crypto and transport) run under plain `php` with no
+Composer dependencies. Authentication tests start a local HTTP fixture:
 
 ```
 composer test          # or: php tests/aggregation.test.php
 ```
 
-The WooCommerce plugin will be refactored to consume this package (dogfood), so there is one
-engine, not two copies.
+Joomla packages vendor this engine at build time. WooCommerce currently maintains
+a WordPress-specific scanner; changes to shared behavior need checks in both.
