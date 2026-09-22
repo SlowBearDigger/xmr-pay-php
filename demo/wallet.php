@@ -23,7 +23,7 @@ $out = __DIR__ . '/wallet.json';
 
 if (file_exists($out)) {
     $w = json_decode(file_get_contents($out), true);
-    echo "wallet already exists — delete demo/wallet.json to regenerate.\n\n";
+    echo "wallet already exists: delete demo/wallet.json to regenerate.\n\n";
     echo "  address  : " . $w['address'] . "\n";
     echo "  view key : " . $w['view_key'] . "\n";
     echo "\n";
@@ -43,7 +43,7 @@ $address    = $cn->encode_address($spend_pub, $view_pub);
 $s  = new Scanner('http://node2.monerodevs.org:38089', 'stagenet', 5);
 $vk = $s->verify_keys($address, $view_priv);
 if (!$vk['address_valid'] || !$vk['key_match']) {
-    fwrite(STDERR, "generated keys failed self-check — should not happen\n");
+    fwrite(STDERR, "generated keys failed self-check: should not happen\n");
     exit(1);
 }
 

@@ -42,7 +42,7 @@ if ($ADDRESS === '' || $VIEW_KEY === '') {
 }
 
 if (!Util::crypto_ready()) {
-    fwrite(STDERR, "PHP extensions missing — need both ext-gmp and ext-bcmath.\n");
+    fwrite(STDERR, "PHP extensions missing: need both ext-gmp and ext-bcmath.\n");
     fwrite(STDERR, "compile php with: --with-gmp --enable-bcmath\n");
     exit(1);
 }
@@ -51,7 +51,7 @@ $scanner = new Scanner($NODES, 'stagenet', 20);
 
 $vk = $scanner->verify_keys($ADDRESS, $VIEW_KEY);
 if (!$vk['address_valid'] || !$vk['key_match']) {
-    fwrite(STDERR, "view key does not match the address — check XMR_ADDRESS / XMR_VIEWKEY.\n");
+    fwrite(STDERR, "view key does not match the address: check XMR_ADDRESS / XMR_VIEWKEY.\n");
     fwrite(STDERR, json_encode($vk) . "\n");
     exit(1);
 }
@@ -68,7 +68,7 @@ if ($SUBADDR_INDEX > 0) {
 
 $tip = $scanner->tip_height();
 if (!$tip) {
-    fwrite(STDERR, "could not reach any stagenet node — check network / nodes.\n");
+    fwrite(STDERR, "could not reach any stagenet node: check network / nodes.\n");
     exit(1);
 }
 

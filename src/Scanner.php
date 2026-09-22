@@ -543,7 +543,7 @@ class Scanner {
 		if ( $require_commitment && empty( $m['commitment_ok'] ) ) {
 			$present = ! empty( $m['commitment_present'] );
 			return array( 'found' => true, 'amount_atomic' => $m['amount_atomic'], 'output_index' => $m['output_index'], 'out_key' => isset( $m['out_key'] ) ? $m['out_key'] : '', 'commitment_ok' => false, 'commitment_present' => $present,
-				'reason' => $present ? 'commitment mismatch — decoded amount not committed on-chain' : 'commitment unavailable — the node may be pruned; use a full (non-pruned) node' );
+				'reason' => $present ? 'commitment mismatch: decoded amount not committed on-chain' : 'commitment unavailable: the node may be pruned; use a full (non-pruned) node' );
 		}
 		$bh   = isset( $tx['_block_height'] ) ? $tx['_block_height'] : null;
 		$conf = ( null !== $bh && null !== $tip && $bh > 0 ) ? max( 0, $tip - $bh ) : ( ! empty( $tx['_in_pool'] ) ? 0 : null );
