@@ -1,8 +1,9 @@
 <?php
 /**
  * Keccak (SHA-3) — vendored from kornrunner/php-keccak (https://github.com/kornrunner/php-keccak),
- * MIT licensed, Copyright (c) Boris Momčilović. Unmodified except the removal of a WordPress
- * direct-access guard. See ../ATTRIBUTION.md.
+ * MIT licensed, Copyright (c) Boris Momčilović. Compared with upstream a166c2eb859a21089a6e004949d35b5f9dd0687b,
+ * this snapshot adds provenance comments and uses ord() for the final-byte padding operation.
+ * See ATTRIBUTION.md for the source comparison and distributed license text.
  */
 
 namespace kornrunner;

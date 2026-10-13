@@ -16,20 +16,29 @@ conformance vectors. Transports, scanning and node-agreement policies differ.
 on top**: it answers *"is this order paid?"*: it derives a per-order subaddress, detects the
 output against your view key, verifies the RingCT amount commitment, checks confirmations and
 time-locks, dedupes the 2018 burning bug, and runs the invoice state machine. It builds on
-monerophp's primitives (see `third-party/monero/ATTRIBUTION.md`); it does not reimplement them.
+monerophp's vendored legacy primitives (see `third-party/monero/ATTRIBUTION.md`).
+
+This checkout contains the classic RingCT payment engine for Monero mainnet.
+It retains exact amounts, output identities, node agreement and resumable block
+scanning. Unknown output formats prevent a scan from being marked complete.
+Experimental CARROT/FCMP development is preserved on `integration/carrot-fcmp`.
+
+The root MIT license covers original project code. The vendored primitives retain
+their copyright notices and complete MIT license texts under `licenses/`.
+See [the package notice](NOTICE) and [primitive attribution](third-party/monero/ATTRIBUTION.md).
 
 ## Requirements
 
 - PHP 7.4+
-- ext-gmp (the money math) and ext-bcmath (base58)
+- ext-gmp (money math), ext-bcmath (base58) and ext-mbstring (Keccak)
 - a Monero node to read the chain (a public one is fine; for serious money run your own or require
   two to agree). No wallet-rpc.
 
-## Install
+## Install this checkout
 
-```
-composer require slowbeardigger/xmr-pay
-```
+Unpack the local archive and `require '/path/to/xmr-pay-php/autoload.php';`.
+For Composer, use a local path repository pointing to this checkout.
+`composer require slowbeardigger/xmr-pay` installs the published release instead.
 
 ## What's here
 
@@ -50,7 +59,7 @@ the full contract and a minimal skeleton. Reference adapters:
 - [xmr-pay for Laravel](https://github.com/SlowBearDigger/xmr-pay-laravel): a service + facade + config.
 
 HikaShop and VirtueMart adapters also exist and share `xmr-pay-adapter-core`.
-Blesta integrates with the JavaScript agent instead of this PHP scanner.
+Blesta also integrates this scanner through its native view-key gateway.
 
 ## Security model
 
@@ -63,13 +72,8 @@ Blesta integrates with the JavaScript agent instead of this PHP scanner.
 
 ## Status
 
-Extracted from the WooCommerce scanner. Tests (`tests/`: state,
-util, aggregation, refund, crypto and transport) run under plain `php` with no
-Composer dependencies. Authentication tests start a local HTTP fixture:
-
-```
-composer test          # or: php tests/aggregation.test.php
-```
+This release branch contains the runtime and its required license notices.
+Validation suites and integration laboratories are maintained separately.
 
 Joomla packages vendor this engine at build time. WooCommerce currently maintains
 a WordPress-specific scanner; changes to shared behavior need checks in both.

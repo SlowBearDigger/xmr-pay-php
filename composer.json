@@ -11,13 +11,11 @@
     "require": {
         "php": ">=7.4",
         "ext-gmp": "*",
-        "ext-bcmath": "*"
+        "ext-bcmath": "*",
+        "ext-mbstring": "*"
     },
     "autoload": {
         "psr-4": { "XmrPay\\": "src/" },
         "classmap": ["third-party/monero/"]
-    },
-    "scripts": {
-        "test": "for t in autoload node-config node-auth scan-resume state util aggregation refund crypto stress invariant-stress; do echo \"-- $t --\"; php tests/$t.test.php || exit 1; done"
     }
 }

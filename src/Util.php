@@ -80,6 +80,16 @@ class Util {
 		return (int) round( $xmr * 1000000000000 );
 	}
 
+	/** Decimal XMR string to atomic units, with no floating-point conversion or rounding. */
+	public static function xmr_to_pico_exact( $xmr ) {
+		if ( ! is_string( $xmr ) || ! preg_match( '/^([0-9]+)(?:\.([0-9]{1,12}))?$/D', $xmr, $parts ) ) {
+			throw new \InvalidArgumentException( 'XMR amount must be a decimal string with at most 12 fractional digits' );
+		}
+		$whole = gmp_mul( gmp_init( $parts[1], 10 ), '1000000000000' );
+		$fraction = str_pad( isset( $parts[2] ) ? $parts[2] : '', 12, '0' );
+		return gmp_strval( gmp_add( $whole, gmp_init( $fraction, 10 ) ) );
+	}
+
 	public static function pico_to_string( $pico ) {
 		$p = gmp_init( (string) $pico, 10 );
 		if ( gmp_cmp( $p, 0 ) <= 0 ) {
@@ -198,8 +208,8 @@ class Util {
 	}
 
 	private static function more_creditable( $a, $b ) {
-		$ak = ! empty( $a['commitment_ok'] );
-		$bk = ! empty( $b['commitment_ok'] );
+		$ak = ! empty( $a['commitment_ok'] ) && empty( $a['carrot'] );
+		$bk = ! empty( $b['commitment_ok'] ) && empty( $b['carrot'] );
 		if ( $ak !== $bk ) { return $ak ? $a : $b; }
 		$ap = ! empty( $a['in_pool'] );
 		$bp = ! empty( $b['in_pool'] );
@@ -241,6 +251,7 @@ class Util {
 		foreach ( $rows as $t ) {
 
 			if ( ! is_array( $t ) || empty( $t['commitment_ok'] ) ) { continue; }
+			if ( ! empty( $t['carrot'] ) ) { continue; }
 			$amt = self::row_amt_pico( $t );
 			if ( isset( $t['txid'] ) && '' !== (string) $t['txid'] ) { $txids[] = (string) $t['txid']; }
 			if ( ! empty( $t['locked'] ) ) { $locked = gmp_add( $locked, $amt ); continue; }

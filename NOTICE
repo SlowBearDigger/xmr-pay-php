@@ -1,0 +1,10 @@
+Original XMRPay project code is offered under the root MIT license.
+
+The classic runtime includes Monero primitives from monero-integrations/monerophp
+and kornrunner/php-keccak. Their copyright notices remain in third-party/monero;
+complete MIT license copies are in licenses/MIT-MONEROPHP.txt and
+licenses/MIT-KECCAK.txt. Preserve those texts and source headers when distributing
+this package, including the John Judy notice in ed25519.php.
+
+See third-party/monero/ATTRIBUTION.md for the source comparison and license pins.
+This notice applies to this classic runtime, not earlier experimental archives.
