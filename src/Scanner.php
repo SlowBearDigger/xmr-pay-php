@@ -13,6 +13,7 @@ class Scanner {
 	private $cn;
 	private $http_timeout;
 	private $network;
+	private $curl_handles = array();
 	private $unsupported_outputs = 0;
 	private $deadline = null;
 	private $last_block_hash = null;
@@ -151,11 +152,16 @@ class Scanner {
 		$timeout_ms = max( 1, (int) ceil( $timeout * 1000 ) );
 		$curl_available = function_exists( 'curl_init' ) && ! ( defined( 'XMRPAY_TESTING_NO_CURL' ) && XMRPAY_TESTING_NO_CURL );
 		if ( $curl_available ) {
-			$ch = curl_init( $url );
+			if ( ! isset( $this->curl_handles[$index] ) ) {
+				$this->curl_handles[$index] = curl_init();
+			}
+			$ch = $this->curl_handles[$index];
+			curl_reset( $ch );
 			$raw = '';
 			$oversized = false;
 			curl_setopt_array( $ch, array(
-				CURLOPT_WRITEFUNCTION => function ( $handle, $chunk ) use ( &$raw, &$oversized ) {
+				CURLOPT_URL => $url,
+				CURLOPT_WRITEFUNCTION => static function ( $handle, $chunk ) use ( &$raw, &$oversized ) {
 					if ( strlen( $raw ) + strlen( $chunk ) > 4 * 1024 * 1024 ) { $oversized = true; return 0; }
 					$raw .= $chunk;
 					return strlen( $chunk );
