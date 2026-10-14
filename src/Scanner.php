@@ -645,6 +645,29 @@ class Scanner {
 		return $this->le8_to_dec( bin2hex( hex2bin( $amt ) ^ hex2bin( $mask8 ) ) );
 	}
 
+	private function decode_legacy_amount( $derivation, $i, $ecdh ) {
+		if ( ! is_array( $ecdh ) || ! is_string( $ecdh['mask'] ?? null ) || ! is_string( $ecdh['amount'] ?? null )
+			|| ! preg_match( '/^[0-9a-f]{64}$/iD', $ecdh['mask'] ) || ! preg_match( '/^[0-9a-f]{64}$/iD', $ecdh['amount'] ) ) {
+			throw new \UnexpectedValueException( 'Invalid legacy RingCT encoding' );
+		}
+		$ed = $this->cn_ed();
+		$encoded_mask = $ed->decodeint( hex2bin( $ecdh['mask'] ) );
+		$encoded_amount = $ed->decodeint( hex2bin( $ecdh['amount'] ) );
+		if ( gmp_cmp( $encoded_mask, $ed->l ) >= 0 || gmp_cmp( $encoded_amount, $ed->l ) >= 0 ) {
+			throw new \UnexpectedValueException( 'Noncanonical legacy RingCT scalar' );
+		}
+		// Monero rctOps.cpp ecdhDecode uses two hashed scalars for RingCT types 1-3.
+		$shared_secret = $this->cn->derivation_to_scalar( $derivation, $i );
+		$mask_hash = $this->cn->hash_to_scalar( $shared_secret );
+		$amount_hash = $this->cn->hash_to_scalar( $mask_hash );
+		$mask = gmp_mod( gmp_sub( $encoded_mask, $ed->decodeint( hex2bin( $mask_hash ) ) ), $ed->l );
+		$amount = gmp_mod( gmp_sub( $encoded_amount, $ed->decodeint( hex2bin( $amount_hash ) ) ), $ed->l );
+		if ( gmp_cmp( $amount, '18446744073709551615' ) > 0 ) {
+			throw new \UnexpectedValueException( 'Legacy RingCT amount exceeds uint64' );
+		}
+		return array( 'amount_atomic' => gmp_strval( $amount ), 'mask' => $mask );
+	}
+
 	public function check_commitment( $amount_atomic, $derivation, $i, $commitment_hex ) {
 		if ( '' === (string) $commitment_hex || null === $commitment_hex ) {
 			return false;
@@ -652,11 +675,15 @@ class Scanner {
 		$ed   = $this->cn_ed();
 		$sk   = $this->cn->derivation_to_scalar( $derivation, $i );
 		$mask = $this->cn->hash_to_scalar( bin2hex( 'commitment_mask' ) . $sk );
+		return $this->check_commitment_with_mask( $amount_atomic, $ed->decodeint( hex2bin( $mask ) ), $commitment_hex );
+	}
 
+	private function check_commitment_with_mask( $amount_atomic, $mask, $commitment_hex ) {
+		$ed   = $this->cn_ed();
 		$H    = $ed->decodepoint( hex2bin( self::H_POINT ) );
 		$aH   = ( '0' === (string) $amount_atomic ) ? array( 0, 1 ) : $ed->scalarmult( $H, gmp_init( $amount_atomic, 10 ) );
 
-		$mG   = $ed->scalarmult_base( $ed->decodeint( hex2bin( $mask ) ) );
+		$mG   = $ed->scalarmult_base( $mask );
 		$C    = bin2hex( $ed->encodepoint( $ed->edwards( $aH, $mG ) ) );
 		return hash_equals( strtolower( (string) $commitment_hex ), strtolower( $C ) );
 	}
@@ -735,16 +762,23 @@ class Scanner {
 				if ( ! $owned ) { continue; }
 
 				try {
-					$amt_hex       = isset( $ecdh[ $i ]['amount'] ) ? $ecdh[ $i ]['amount'] : '';
-					$amount_atomic = '' !== $amt_hex ? $this->decode_amount( $derivation, $i, $amt_hex ) : '0';
 					$commitment    = $this->outpk_mask( $outpk, $i );
+					if ( in_array( $tx['rct_signatures']['type'] ?? null, array( 1, 2, 3 ), true ) ) {
+						$decoded = $this->decode_legacy_amount( $derivation, $i, $ecdh[ $i ] ?? null );
+						$amount_atomic = $decoded['amount_atomic'];
+						$commitment_ok = $commitment ? $this->check_commitment_with_mask( $amount_atomic, $decoded['mask'], $commitment ) : false;
+					} else {
+						$amt_hex = isset( $ecdh[ $i ]['amount'] ) ? $ecdh[ $i ]['amount'] : '';
+						$amount_atomic = '' !== $amt_hex ? $this->decode_amount( $derivation, $i, $amt_hex ) : '0';
+						$commitment_ok = $commitment ? $this->check_commitment( $amount_atomic, $derivation, $i, $commitment ) : false;
+					}
 					$matches[] = array(
 						'output_index'  => $i,
 						'amount_atomic' => $amount_atomic,
 						'out_key'       => $out_key,
 
 						'commitment_present' => ( '' !== (string) $commitment && null !== $commitment ),
-						'commitment_ok' => $commitment ? $this->check_commitment( $amount_atomic, $derivation, $i, $commitment ) : false,
+						'commitment_ok' => $commitment_ok,
 					);
 				} catch ( \Throwable $e ) {
 
