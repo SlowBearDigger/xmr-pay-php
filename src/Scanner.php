@@ -741,7 +741,11 @@ class Scanner {
 		if ( $this->budget_exhausted() ) { return array(); }
 		$dec = $this->cn->decode_address( $address );
 		if ( empty( $dec['spendKey'] ) ) { return array(); }
-		$C_spend = $dec['spendKey'];
+		return $this->detect_outputs( $tx, array( $dec['spendKey'] => null ), $view_key, false );
+	}
+
+	private function detect_outputs( $tx, $targets, $view_key, $multiple ) {
+		$this->unsupported_outputs = 0;
 		$extra = $this->parse_extra( isset( $tx['extra'] ) && is_array( $tx['extra'] ) ? $tx['extra'] : array() );
 		$vout = isset( $tx['vout'] ) && is_array( $tx['vout'] ) ? $tx['vout'] : array();
 		if ( count( $vout ) > 256 ) { $this->unsupported_outputs = count( $vout ); return array(); }
@@ -757,6 +761,9 @@ class Scanner {
 			$candidates = array();
 			if ( isset( $extra['additional'][ $i ] ) ) { $candidates[] = $extra['additional'][ $i ]; }
 			if ( $extra['main'] ) { $candidates[] = $extra['main']; }
+			$selected_derivation = null;
+			$selected_target = null;
+			$ambiguous = false;
 			foreach ( $candidates as $R ) {
 				if ( $this->budget_exhausted() ) { return array(); }
 
@@ -765,54 +772,79 @@ class Scanner {
 						$derivations[ $R ] = $this->cn->gen_key_derivation( $R, $view_key );
 					}
 					$derivation = $derivations[ $R ];
-					$owned      = ( $this->cn->derive_public_key( $derivation, $i, $C_spend ) === $out_key );
+					$spend = $multiple ? $this->recover_spend_key( $out_key, $derivation, $i ) : key( $targets );
+					if ( $spend === null || ! array_key_exists( $spend, $targets ) ) { continue; }
+					// Preserve the existing literal comparison even when point decoding accepts other encodings.
+					$owned = $this->cn->derive_public_key( $derivation, $i, $spend ) === $out_key;
 				} catch ( \Throwable $e ) {
 					continue;
 				}
 				if ( ! $owned ) { continue; }
-
-				try {
-					$commitment    = $this->outpk_mask( $outpk, $i );
-					if ( in_array( $tx['rct_signatures']['type'] ?? null, array( 1, 2, 3 ), true ) ) {
-						$decoded = $this->decode_legacy_amount( $derivation, $i, $ecdh[ $i ] ?? null );
-						$amount_atomic = $decoded['amount_atomic'];
-						$commitment_ok = $commitment ? $this->check_commitment_with_mask( $amount_atomic, $decoded['mask'], $commitment ) : false;
-					} else {
-						$amt_hex = isset( $ecdh[ $i ]['amount'] ) ? $ecdh[ $i ]['amount'] : '';
-						$amount_atomic = '' !== $amt_hex ? $this->decode_amount( $derivation, $i, $amt_hex ) : '0';
-						$commitment_ok = $commitment ? $this->check_commitment( $amount_atomic, $derivation, $i, $commitment ) : false;
-					}
-					$matches[] = array(
-						'output_index'  => $i,
-						'amount_atomic' => $amount_atomic,
-						'out_key'       => $out_key,
-
-						'commitment_present' => ( '' !== (string) $commitment && null !== $commitment ),
-						'commitment_ok' => $commitment_ok,
-					);
-				} catch ( \Throwable $e ) {
-
-					$matches[] = array(
-						'output_index'      => $i,
-						'amount_atomic'     => '0',
-						'out_key'           => $out_key,
-						'commitment_present' => false,
-						'commitment_ok'     => false,
-						'errored'           => true,
-					);
+				if ( $selected_derivation !== null ) {
+					if ( $selected_target !== $targets[$spend] ) { $ambiguous = true; break; }
+					continue;
 				}
-				break;
+				$selected_derivation = $derivation;
+				$selected_target = $targets[$spend];
+				if ( ! $multiple ) { break; }
 			}
+			if ( $ambiguous ) { $this->unsupported_outputs++; continue; }
+			if ( $selected_derivation === null ) { continue; }
+			$derivation = $selected_derivation;
+
+			try {
+				$commitment = $this->outpk_mask( $outpk, $i );
+				if ( in_array( $tx['rct_signatures']['type'] ?? null, array( 1, 2, 3 ), true ) ) {
+					$decoded = $this->decode_legacy_amount( $derivation, $i, $ecdh[ $i ] ?? null );
+					$amount_atomic = $decoded['amount_atomic'];
+					$commitment_ok = $commitment ? $this->check_commitment_with_mask( $amount_atomic, $decoded['mask'], $commitment ) : false;
+				} else {
+					$amt_hex = isset( $ecdh[ $i ]['amount'] ) ? $ecdh[ $i ]['amount'] : '';
+					$amount_atomic = '' !== $amt_hex ? $this->decode_amount( $derivation, $i, $amt_hex ) : '0';
+					$commitment_ok = $commitment ? $this->check_commitment( $amount_atomic, $derivation, $i, $commitment ) : false;
+				}
+				$matches[] = array(
+					'output_index'  => $i,
+					'amount_atomic' => $amount_atomic,
+					'out_key'       => $out_key,
+
+					'commitment_present' => ( '' !== (string) $commitment && null !== $commitment ),
+					'commitment_ok' => $commitment_ok,
+				);
+			} catch ( \Throwable $e ) {
+
+				$matches[] = array(
+					'output_index'      => $i,
+					'amount_atomic'     => '0',
+					'out_key'           => $out_key,
+					'commitment_present' => false,
+					'commitment_ok'     => false,
+					'errored'           => true,
+				);
+			}
+			if ( $multiple ) { $matches[count( $matches ) - 1]['_target_key'] = $selected_target; }
 		}
 		usort( $matches, function ( $a, $b ) { return $a['output_index'] <=> $b['output_index']; } );
 		return $this->budget_exhausted() ? array() : $matches;
 	}
 
+	private function recover_spend_key( $out_key, $derivation, $index ) {
+		if ( ! preg_match( '/^[0-9a-f]{64}$/D', $out_key ) ) { return null; }
+		$ed = $this->cn_ed();
+		$output = $ed->decodepoint( hex2bin( $out_key ) );
+		$scalar = $this->cn->derivation_to_scalar( $derivation, $index );
+		$point = $ed->scalarmult_base( $ed->decodeint( hex2bin( $scalar ) ) );
+		// Monero derive_subaddress_public_key: D = P - Hs(derivation || index)G.
+		$point[0] = gmp_sub( $ed->q, $point[0] );
+		return bin2hex( $ed->encodepoint( $ed->edwards( $output, $point ) ) );
+	}
+
 	/** Classic detection is atomic; block scans resume between transactions. */
-	private function scan_transaction_chunk( $tx, $address, $view_key ) {
+	private function scan_transaction_chunk( $tx, $address, $view_key, $targets = null ) {
 		$this->unsupported_outputs = 0;
 		$vout = $tx['vout'] ?? array();
-		$matches = $this->detect_all_in_tx( $tx, $address, $view_key );
+		$matches = $targets === null ? $this->detect_all_in_tx( $tx, $address, $view_key )
+			: $this->detect_outputs( $tx, $targets, $view_key, true );
 		return array( 'matches' => $matches, 'complete' => true, 'next_output' => count( $vout ), 'readable' => $this->unsupported_outputs === 0 );
 	}
 
@@ -892,13 +924,108 @@ class Scanner {
 
 	/** Scan all owned outputs; checkpoint hashes are optional adapter-owned continuity evidence. */
 	public function scan_all( $address, $view_key, $from_height, $to_height, $opts = array() ) {
+		return $this->scan_targets( $address, $view_key, $from_height, $to_height, $opts );
+	}
+
+	/** Share acquisition and ownership detection across at most 25 addresses from one wallet. */
+	public function scan_many( array $addresses, $view_key, $from_height, $to_height, array $opts = array() ): array {
+		$started = hrtime( true ) / 1000000000;
+		if ( ! $addresses ) { return array(); }
+		if ( count( $addresses ) > 25 || ! is_string( $view_key ) || ! preg_match( '/^[0-9a-fA-F]{64}$/D', $view_key ) ) {
+			throw new \InvalidArgumentException( 'Invalid wallet scan batch.' );
+		}
+		$targets = array();
+		foreach ( $addresses as $key => $address ) {
+			if ( ! is_string( $address ) || ! $this->address_valid( $address ) ) {
+				throw new \InvalidArgumentException( 'Invalid wallet scan address.' );
+			}
+			$decoded = $this->cn->decode_address( $address );
+			$spend = $decoded['spendKey'];
+			if ( array_key_exists( $spend, $targets ) ) {
+				throw new \InvalidArgumentException( 'Duplicate wallet scan spend key.' );
+			}
+			$targets[$spend] = $key;
+		}
+		if ( isset( $opts['partial_block'] ) ) { throw new \InvalidArgumentException( 'Use individual partial blocks for a wallet scan.' ); }
+		$partials = $opts['partial_blocks'] ?? array();
+		unset( $opts['partial_blocks'] );
+		if ( ! is_array( $partials ) ) { throw new \InvalidArgumentException( 'Invalid wallet scan cursors.' ); }
+		if ( $partials ) { $opts['partial_block'] = $this->merge_partial_blocks( $addresses, $view_key, $partials ); }
+		$budget = isset( $opts['time_budget'] ) ? (float) $opts['time_budget'] : 8.0;
+		if ( $budget >= 0 ) { $opts['time_budget'] = max( 0, $budget - ( hrtime( true ) / 1000000000 - $started ) ); }
+		$result = $this->scan_targets( reset( $addresses ), $view_key, $from_height, $to_height, $opts, $targets );
+		$failures = $result['_target_failures'] ?? array();
+		unset( $result['_target_failures'] );
+		$results = array();
+		foreach ( $addresses as $key => $address ) {
+			$individual = $result;
+			$individual['matches'] = $this->target_matches( $result['matches'], $key );
+			if ( isset( $individual['partial_block'] ) ) {
+				$individual['partial_block']['identity'] = hash( 'sha256', $address . ':' . $view_key );
+				$individual['partial_block']['matches'] = $this->target_matches( $individual['partial_block']['matches'], $key );
+			}
+			if ( isset( $failures[$key] ) && empty( $result['checkpoint_error'] )
+				&& empty( $result['reorg_detected'] ) && empty( $result['budget_exhausted'] ) ) {
+				$failure = $failures[$key];
+				if ( $individual['scanned_to'] >= $failure['scanned_to'] ) {
+					$individual['scanned_to'] = $failure['scanned_to'];
+					$individual['checkpoint'] = $failure['checkpoint'];
+				}
+				$individual['matches'] = $failure['matches'];
+				$individual['unsupported_outputs'] = $failure['unsupported_outputs'];
+				unset( $individual['partial_block'] );
+				$individual['scan_status'] = 'unverified-commitment';
+			}
+			$results[$key] = $this->scan_diagnostics( $individual, (int) $from_height, (int) $to_height );
+		}
+		return $results;
+	}
+
+	private function merge_partial_blocks( $addresses, $view_key, $partials ) {
+		if ( ! is_array( $partials ) || count( $partials ) !== count( $addresses ) ) {
+			throw new \InvalidArgumentException( 'Incompatible wallet scan cursors.' );
+		}
+		$merged = null;
+		$common = null;
+		foreach ( $addresses as $key => $address ) {
+			$partial = $partials[$key] ?? null;
+			if ( ! is_array( $partial ) || ( $partial['identity'] ?? null ) !== hash( 'sha256', $address . ':' . $view_key )
+				|| ! is_array( $partial['matches'] ?? null ) ) {
+				throw new \InvalidArgumentException( 'Invalid wallet scan cursor identity.' );
+			}
+			$cursor = $partial;
+			unset( $cursor['identity'], $cursor['matches'] );
+			$cursor = self::canonical_evidence( $cursor );
+			if ( $common !== null && $cursor !== $common ) { throw new \InvalidArgumentException( 'Incompatible wallet scan cursors.' ); }
+			$common = $cursor;
+			if ( $merged === null ) { $merged = $partial; $merged['matches'] = array(); }
+			foreach ( $partial['matches'] as $match ) {
+				if ( ! is_array( $match ) ) { throw new \InvalidArgumentException( 'Invalid wallet scan cursor matches.' ); }
+				$match['_target_key'] = $key;
+				$merged['matches'][] = $match;
+			}
+		}
+		return $merged;
+	}
+
+	private function target_matches( $matches, $key ) {
+		$selected = array();
+		foreach ( $matches as $match ) {
+			if ( ( $match['_target_key'] ?? null ) !== $key ) { continue; }
+			unset( $match['_target_key'] );
+			$selected[] = $match;
+		}
+		return $selected;
+	}
+
+	private function scan_targets( $address, $view_key, $from_height, $to_height, $opts, $targets = null ) {
 		$this->reset_node_error();
 		$previous_deadline = $this->deadline;
 		$budget = isset( $opts['time_budget'] ) ? (float) $opts['time_budget'] : 8.0;
 		$this->set_time_budget( $budget );
 		if ( $previous_deadline !== null ) { $this->deadline = min( $this->deadline, $previous_deadline ); }
 		try {
-			$result = $this->scan_all_budgeted( $address, $view_key, $from_height, $to_height, $opts );
+			$result = $this->scan_all_budgeted( $address, $view_key, $from_height, $to_height, $opts, $targets );
 			$result['budget_exhausted'] = $this->budget_exhausted();
 			if ( ! empty( $result['checkpoint_error'] ) ) { unset( $result['partial_block'] ); }
 			if ( $result['budget_exhausted'] ) {
@@ -934,7 +1061,7 @@ class Scanner {
 		return $result;
 	}
 
-	private function scan_all_budgeted( $address, $view_key, $from_height, $to_height, $opts ) {
+	private function scan_all_budgeted( $address, $view_key, $from_height, $to_height, $opts, $targets = null ) {
 		$max_blocks = isset( $opts['max_blocks'] ) ? max( 1, (int) $opts['max_blocks'] ) : 30;
 		$require = isset( $opts['require_commitment'] ) ? (bool) $opts['require_commitment'] : true;
 		$tip = isset( $opts['tip'] ) ? (int) $opts['tip'] : (int) $to_height;
@@ -1040,7 +1167,7 @@ class Scanner {
 						$incomplete = true;
 						continue;
 					}
-					$chunk = $this->scan_transaction_chunk( $tx, $address, $view_key );
+					$chunk = $this->scan_transaction_chunk( $tx, $address, $view_key, $targets );
 					if ( $this->budget_exhausted() ) { return $result; }
 					$result['unsupported_outputs'] += $this->unsupported_outputs;
 					if ( $this->unsupported_outputs ) { $incomplete = true; }
@@ -1054,12 +1181,18 @@ class Scanner {
 					}
 					foreach ( $chunk['matches'] as $match ) {
 						if ( $require && empty( $match['commitment_ok'] ) ) {
-							$result['scan_status'] = 'unverified-commitment';
-							$incomplete = true;
+							if ( $targets === null ) {
+								$result['scan_status'] = 'unverified-commitment';
+								$incomplete = true;
+							} elseif ( ! isset( $result['_target_failures'][$match['_target_key']] ) ) {
+								$result['_target_failures'][$match['_target_key']] = array( 'height' => $height,
+									'scanned_to' => $result['scanned_to'], 'checkpoint' => $result['checkpoint'] );
+							}
 							continue;
 						}
 						$row = $this->classify_match( $match, $tx, max( $tip, $height ), $require );
 						unset( $row['found'], $row['reason'] );
+						if ( $targets !== null ) { $row['_target_key'] = $match['_target_key']; }
 						$row['block_hash'] = $block_hash;
 						$block_matches[] = $row;
 					}
@@ -1073,6 +1206,11 @@ class Scanner {
 					$pending_transaction = null;
 					$next_transaction++;
 				}
+			}
+			foreach ( $result['_target_failures'] ?? array() as $key => $failure ) {
+				if ( $failure['height'] !== $height ) { continue; }
+				$result['_target_failures'][$key]['matches'] = $this->target_matches( array_merge( $result['matches'], $block_matches ), $key );
+				$result['_target_failures'][$key]['unsupported_outputs'] = $result['unsupported_outputs'];
 			}
 			// Recheck the canonical header after acquisition; never mix branches in one result.
 			if ( $block_hash !== null ) {
