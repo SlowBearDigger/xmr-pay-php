@@ -748,6 +748,7 @@ class Scanner {
 		$ecdh = $tx['rct_signatures']['ecdhInfo'] ?? array();
 		$outpk = $tx['rct_signatures']['outPk'] ?? ( $tx['rctsig_prunable']['outPk'] ?? array() );
 		$matches = array();
+		$derivations = array();
 		for ( $i = 0; $i < count( $vout ); $i++ ) {
 			if ( $this->budget_exhausted() ) { return array(); }
 			$t       = ( isset( $vout[ $i ]['target'] ) && is_array( $vout[ $i ]['target'] ) ) ? $vout[ $i ]['target'] : array();
@@ -760,7 +761,10 @@ class Scanner {
 				if ( $this->budget_exhausted() ) { return array(); }
 
 				try {
-					$derivation = $this->cn->gen_key_derivation( $R, $view_key );
+					if ( ! isset( $derivations[ $R ] ) ) {
+						$derivations[ $R ] = $this->cn->gen_key_derivation( $R, $view_key );
+					}
+					$derivation = $derivations[ $R ];
 					$owned      = ( $this->cn->derive_public_key( $derivation, $i, $C_spend ) === $out_key );
 				} catch ( \Throwable $e ) {
 					continue;
