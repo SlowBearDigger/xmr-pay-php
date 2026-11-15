@@ -1,5 +1,10 @@
 # Vendored crypto — attribution
 
+Updated 2026-11-14: `base58.php` and `Cryptonote.php` are copied intact from
+MoneroPHP commit `101e73dae3f36ff8bb6dbb09c80a912b67f508a6`, including the
+integer-scale, canonical encoding, address, transaction-extra and header fixes.
+The historical source comparison below describes the preceding snapshot.
+
 These files are the Monero cryptography primitives this package builds on. They are NOT ours:
 
 - `Cryptonote.php`, `base58.php`, `Varint.php`, `ed25519.php` — from
